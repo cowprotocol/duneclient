@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 from io import BytesIO
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Union
 
 import certifi
 from aiohttp import (
@@ -38,6 +38,45 @@ from dune_client.models import (
 )
 
 from dune_client.query import QueryBase, parse_query_object_or_id
+
+
+class GetResultParams(NamedTuple):
+    """
+    Parameters for get reult functions
+    """
+
+    columns: Optional[List[str]] = None
+    sample_count: Optional[int] = None
+    filters: Optional[str] = None
+    sort_by: Optional[List[str]] = None
+    batch_size: Optional[int] = None
+
+
+class RefreshParams(NamedTuple):
+    """
+    Parameters for refresh functions
+    """
+
+    performance: Optional[str] = None
+    batch_size: Optional[int] = None
+    sample_count: Optional[int] = None
+    filters: Optional[str] = None
+    sort_by: Optional[List[str]] = None
+    columns: Optional[List[str]] = None
+
+
+class ResultPageParams(NamedTuple):
+    """
+    Parameters for result page functions
+    """
+
+    columns: Optional[List[str]] = None
+    sample_count: Optional[int] = None
+    filters: Optional[str] = None
+    sort_by: Optional[List[str]] = None
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    batch_size: Optional[int] = None
 
 
 class RetryableError(Exception):
@@ -232,30 +271,34 @@ class AsyncDuneClient(BaseDuneClient):
     async def get_result(
         self,
         job_id: str,
-        batch_size: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
+        params: Optional[GetResultParams] = None,
     ) -> ResultsResponse:
         """GET results from Dune API for `job_id` (aka `execution_id`)"""
+        if params is None:
+            params = GetResultParams()
+
+        batch_size = params.batch_size
+
         assert (
             # We are not sampling
-            sample_count is None
+            params.sample_count is None
             # We are sampling and don't use filters or pagination
-            or (batch_size is None and filters is None)
+            or (batch_size is None and params.filters is None)
         ), "sampling cannot be combined with filters or pagination"
 
-        if sample_count is None and batch_size is None:
+        if params.sample_count is None and batch_size is None:
             batch_size = MAX_NUM_ROWS_PER_BATCH
 
+        result_page_params = ResultPageParams(
+            batch_size=batch_size,
+            columns=params.columns,
+            sample_count=params.sample_count,
+            filters=params.filters,
+            sort_by=params.sort_by,
+        )
         results = await self._get_result_page(
             job_id,
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            limit=batch_size,
+            params=result_page_params,
         )
         while results.next_uri is not None:
             batch = await self._get_result_by_url(results.next_uri)
@@ -266,11 +309,7 @@ class AsyncDuneClient(BaseDuneClient):
     async def get_result_csv(
         self,
         job_id: str,
-        batch_size: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
+        params: Optional[GetResultParams] = None,
     ) -> ExecutionResultCSV:
         """
         GET results in CSV format from Dune API for `job_id` (aka `execution_id`)
@@ -279,23 +318,31 @@ class AsyncDuneClient(BaseDuneClient):
         use this method for large results where you want lower CPU and memory overhead
         if you need metadata information use get_results() or get_status()
         """
+        if params is None:
+            params = GetResultParams()
+
+        batch_size = params.batch_size
+
         assert (
             # We are not sampling
-            sample_count is None
+            params.sample_count is None
             # We are sampling and don't use filters or pagination
-            or (batch_size is None and filters is None)
+            or (batch_size is None and params.filters is None)
         ), "sampling cannot be combined with filters or pagination"
 
-        if sample_count is None and batch_size is None:
+        if params.sample_count is None and batch_size is None:
             batch_size = MAX_NUM_ROWS_PER_BATCH
 
+        params = ResultPageParams(
+            batch_size=batch_size,
+            columns=params.columns,
+            sample_count=params.sample_count,
+            filters=params.filters,
+            sort_by=params.sort_by,
+        )
         results = await self._get_result_csv_page(
             job_id,
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            limit=batch_size,
+            params=params,
         )
         while results.next_uri is not None:
             batch = await self._get_result_csv_by_url(results.next_uri)
@@ -356,82 +403,80 @@ class AsyncDuneClient(BaseDuneClient):
     async def refresh(
         self,
         query: QueryBase,
+        params: Optional[RefreshParams] = None,
         ping_frequency: int = 5,
-        performance: Optional[str] = None,
-        batch_size: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
     ) -> ResultsResponse:
         """
         Executes a Dune `query`, waits until execution completes,
         fetches and returns the results.
         Sleeps `ping_frequency` seconds between each status request.
         """
+
+        if params is None:
+            params = RefreshParams()
+
         assert (
             # We are not sampling
-            sample_count is None
+            params.sample_count is None
             # We are sampling and don't use filters or pagination
-            or (batch_size is None and filters is None)
+            or (params.batch_size is None and params.filters is None)
         ), "sampling cannot be combined with filters or pagination"
 
         job_id = await self._refresh(
-            query, ping_frequency=ping_frequency, performance=performance
+            query, ping_frequency=ping_frequency, performance=params.performance
+        )
+        params = GetResultParams(
+            batch_size=params.batch_size,
+            columns=params.columns,
+            sample_count=params.sample_count,
+            filters=params.filters,
+            sort_by=params.sort_by,
         )
         return await self.get_result(
             job_id,
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            batch_size=batch_size,
+            params=params,
         )
 
     async def refresh_csv(
         self,
         query: QueryBase,
+        params: Optional[RefreshParams] = None,
         ping_frequency: int = 5,
-        performance: Optional[str] = None,
-        batch_size: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
     ) -> ExecutionResultCSV:
         """
         Executes a Dune query, waits till execution completes,
         fetches and the results in CSV format
         (use it load the data directly in pandas.from_csv() or similar frameworks)
         """
+        if params is None:
+            params = RefreshParams()
+
         assert (
             # We are not sampling
-            sample_count is None
+            params.sample_count is None
             # We are sampling and don't use filters or pagination
-            or (batch_size is None and filters is None)
+            or (params.batch_size is None and params.filters is None)
         ), "sampling cannot be combined with filters or pagination"
 
         job_id = await self._refresh(
-            query, ping_frequency=ping_frequency, performance=performance
+            query, ping_frequency=ping_frequency, performance=params.performance
+        )
+        get_result_params = GetResultParams(
+            batch_size=params.batch_size,
+            columns=params.columns,
+            sample_count=params.sample_count,
+            filters=params.filters,
+            sort_by=params.sort_by,
         )
         return await self.get_result_csv(
             job_id,
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            batch_size=batch_size,
+            params=get_result_params,
         )
 
     async def refresh_into_dataframe(
         self,
         query: QueryBase,
-        performance: Optional[str] = None,
-        batch_size: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
+        params: Optional[RefreshParams] = None,
     ) -> Any:
         """
         Execute a Dune Query, waits till execution completes,
@@ -439,20 +484,26 @@ class AsyncDuneClient(BaseDuneClient):
 
         This is a convenience method that uses refresh_csv underneath
         """
+        if params is None:
+            params = RefreshParams()
+
         try:
             import pandas  # pylint: disable=import-outside-toplevel
         except ImportError as exc:
             raise ImportError(
                 "dependency failure, pandas is required but missing"
             ) from exc
+        params = RefreshParams(
+            performance=params.performance,
+            batch_size=params.batch_size,
+            columns=params.columns,
+            sample_count=params.sample_count,
+            filters=params.filters,
+            sort_by=params.sort_by,
+        )
         results = await self.refresh_csv(
-            query,
-            performance=performance,
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            batch_size=batch_size,
+            query=query,
+            params=params,
         )
         return pandas.read_csv(results.data)
 
@@ -463,27 +514,24 @@ class AsyncDuneClient(BaseDuneClient):
     async def _get_result_page(
         self,
         job_id: str,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
+        params: Optional[ResultPageParams] = None,
     ) -> ResultsResponse:
         """GET a page of results from Dune API for `job_id` (aka `execution_id`)"""
+        if params is None:
+            params = ResultPageParams()
 
-        if sample_count is None and limit is None and offset is None:
+        limit = params.limit
+        offset = params.offset
+
+        if params.sample_count is None and limit is None and offset is None:
             limit = MAX_NUM_ROWS_PER_BATCH
             offset = 0
 
-        params = self._build_parameters(
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            limit=limit,
-            offset=offset,
-        )
+        params = params._asdict()
+
+        params["limit"] = limit
+        params["offset"] = offset
+
         response_json = await self._get(
             route=f"/execution/{job_id}/results",
             params=params,
@@ -510,31 +558,25 @@ class AsyncDuneClient(BaseDuneClient):
             raise DuneError(response_json, "ResultsResponse", err) from err
 
     async def _get_result_csv_page(
-        self,
-        job_id: str,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
+        self, job_id: str, params: Optional[ResultPageParams] = None
     ) -> ExecutionResultCSV:
         """
         GET a page of results in CSV format from Dune API for `job_id` (aka `execution_id`)
         """
+        if params is None:
+            params = ResultPageParams()
 
-        if sample_count is None and limit is None and offset is None:
+        limit = params.limit
+        offset = params.offset
+
+        if params.sample_count is None and limit is None and offset is None:
             limit = MAX_NUM_ROWS_PER_BATCH
             offset = 0
 
-        params = self._build_parameters(
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            limit=limit,
-            offset=offset,
-        )
+        params = params._asdict()
+
+        params["limit"] = limit
+        params["offset"] = offset
 
         route = f"/execution/{job_id}/results/csv"
         response = await self._get(route=route, params=params, raw=True)

@@ -4,13 +4,26 @@ fetch and filter data from custom endpoints.
 """
 
 from __future__ import annotations
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
 from dune_client.api.base import BaseRouter
 from dune_client.models import (
     DuneError,
     ResultsResponse,
 )
+
+
+class CustomAPIParams(NamedTuple):
+    """
+    Params for Custom Endpoint API Function
+    """
+
+    limit: Optional[int] = None
+    offset: Optional[int] = None
+    columns: Optional[List[str]] = None
+    sample_count: Optional[int] = None
+    filters: Optional[str] = None
+    sort_by: Optional[List[str]] = None
 
 
 # pylint: disable=duplicate-code
@@ -25,12 +38,7 @@ class CustomEndpointAPI(BaseRouter):
         self,
         handle: str,
         endpoint: str,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        columns: Optional[List[str]] = None,
-        sample_count: Optional[int] = None,
-        filters: Optional[str] = None,
-        sort_by: Optional[List[str]] = None,
+        params: Optional[CustomAPIParams] = None,
     ) -> ResultsResponse:
         """
         Custom endpoints allow you to fetch and filter data from any
@@ -48,17 +56,12 @@ class CustomEndpointAPI(BaseRouter):
             filters (str, optional): The filters to apply.
             sort_by (List[str], optional): The columns to sort by.
         """
-        params = self._build_parameters(
-            columns=columns,
-            sample_count=sample_count,
-            filters=filters,
-            sort_by=sort_by,
-            limit=limit,
-            offset=offset,
-        )
+        if params is None:
+            params = CustomAPIParams()
+
         response_json = self._get(
             route=f"/endpoints/{handle}/{endpoint}/results",
-            params=params,
+            params=params._asdict(),
         )
         try:
             return ResultsResponse.from_dict(response_json)
